@@ -331,13 +331,16 @@ class Scenario():
 
         link_file = self.data_file_path(net_settings.get('link_file'))
         node_file = self.data_file_path(net_settings.get('node_file'))
+        saved_graph = self.data_file_path(net_settings.get('saved_graph'))
 
         del net_settings['link_file']
         del net_settings['node_file']
+        del net_settings['saved_graph']
 
         net = Network(
             link_file=link_file,
             node_file=node_file,
+            saved_graph=saved_graph,
             **net_settings,
         )
 
@@ -417,7 +420,7 @@ class Scenario():
             self.log(f'skimming {mode} skim from network...')
             matrix = self.network.get_skim_matrix(
                 self.zone_nodes,
-                self.network_settings.get(f'route_varcoef_{mode}'),
+                self.network_settings.get(f'weights_{mode}'),
                 max_cost=self.network_settings.get(f'max_cost_{mode}'))
 
             skim = Skim(matrix,

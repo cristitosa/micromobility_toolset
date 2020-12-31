@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import numpy as np
 import pandas as pd
@@ -29,7 +30,6 @@ def read_nodes(file_path, table_name, node_name, attributes):
     if file_path.endswith('.csv'):
         node_df = pd.read_csv(
             file_path,
-            index_col=node_name,
             usecols=columns)
 
     elif file_path.endswith('.db'):
@@ -38,7 +38,6 @@ def read_nodes(file_path, table_name, node_name, attributes):
         node_df = pd.read_sql(
             f'select * from {table_name}',
             db_connection,
-            index_col=node_name,
             columns=columns)
 
         db_connection.close()
@@ -54,6 +53,7 @@ def read_nodes(file_path, table_name, node_name, attributes):
 
 def read_links(file_path,
                table_name,
+               link_name,
                from_name,
                to_name,
                attributes_by_direction):
@@ -61,6 +61,7 @@ def read_links(file_path,
     """read links from sqlite database into network data structure, void
 
     file_path : path to csv
+    link_name: link_id
     from_name : column name of from node
     to_name : column name of to node
     attributes_by_direction : dictionary of
@@ -75,7 +76,7 @@ def read_links(file_path,
         ab_columns.append(ab)
         ba_columns.append(ba)
 
-    columns = ab_columns + ba_columns + [from_name, to_name]
+    columns = ab_columns + ba_columns + [link_name, from_name, to_name]
 
     if file_path.endswith('.csv'):
         link_df = pd.read_csv(file_path, usecols=columns)
@@ -90,10 +91,10 @@ def read_links(file_path,
         db_connection.close()
 
     else:
-        raise TypeError(f'cannot read nodes from filetype {file_path}')
+        raise TypeError(f'cannot read links from filetype {file_path}')
 
-    ab_df = link_df[[from_name, to_name]].copy()
-    ba_df = link_df[[from_name, to_name]].copy()
+    ab_df = link_df[[link_name, from_name, to_name]].copy()
+    ba_df = link_df[[link_name, from_name, to_name]].copy()
 
     # set directional column values
     for k, v in attributes_by_direction.items():
@@ -103,7 +104,7 @@ def read_links(file_path,
     # TODO: add a two_way network property
     ba_df.rename(columns={from_name: to_name, to_name: from_name}, inplace=True)
 
-    return pd.concat([ab_df, ba_df], sort=True).set_index([from_name, to_name]).sort_index()
+    return pd.concat([ab_df, ba_df], sort=True)
 
 
 class Network():
@@ -111,8 +112,10 @@ class Network():
     def __init__(self, **kwargs):
         """initialize network data structure, void"""
 
-        self.node_x_name = kwargs.get('node_x_name')
-        self.node_y_name = kwargs.get('node_y_name')
+        self.node_name = kwargs.get('node_name')
+        self.link_name = kwargs.get('link_name')
+        self.link_from_node = kwargs.get('from_name')
+        self.link_to_node = kwargs.get('to_name')
 
         self.node_df = read_nodes(
             kwargs.get('node_file'),
@@ -124,6 +127,7 @@ class Network():
         self.link_df = read_links(
             kwargs.get('link_file'),
             kwargs.get('link_table_name'),
+            kwargs.get('link_name'),
             kwargs.get('from_name'),
             kwargs.get('to_name'),
             kwargs.get('link_attributes_by_direction')
@@ -144,16 +148,16 @@ class Network():
 
         """
 
-        node_nodes = set(self.node_df.index.values)
+        node_nodes = set(list(self.node_df[self.node_name]))
         link_nodes = set(
-            list(self.link_df.index.get_level_values(0)) +
-            list(self.link_df.index.get_level_values(1)))
+            list(self.link_df[self.link_from_node]) +
+            list(self.link_df[self.link_to_node]))
 
         stray_nodes = node_nodes - link_nodes
         missing_nodes = link_nodes - node_nodes
 
         if stray_nodes:
-            self.node_df = self.node_df[~self.node_df.index.isin(list(stray_nodes))]
+            self.node_df = self.node_df[~self.node_df[self.node_name].isin(list(stray_nodes))]
             print(f'removed {len(stray_nodes)} stray nodes from network')
 
         if missing_nodes:
@@ -163,21 +167,31 @@ class Network():
         """build graph representation of network
         """
 
-        if graph_file:
+        if os.path.exists(graph_file or ''):
 
             return ig.Graph.Read(graph_file)
 
+        # first two link columns need to be from/to nodes and
+        # first node column must be node name.
         # igraph expects vertex ids to be strings
-        link_df = self.link_df.reset_index()
-        node_df = self.node_df.reset_index()
+        self.link_df[[self.link_from_node, self.link_to_node]] =\
+            self.link_df[[self.link_from_node, self.link_to_node]].astype(str)
 
-        link_df.iloc[:, [0,1]] = link_df.iloc[:, [0,1]].astype(str)
-        node_df.iloc[:, 0] = node_df.iloc[:, 0].astype(str)
+        self.node_df[self.node_name] = self.node_df[self.node_name].astype(str)
 
-        return ig.Graph.DataFrame(
+        link_df = self.link_df[[self.link_from_node, self.link_to_node, *self.link_df.columns]]
+        node_df = self.node_df[[self.node_name, *self.node_df.columns]]
+
+        graph = ig.Graph.DataFrame(
             edges=link_df,
             vertices=node_df,
             directed=True)
+
+        if graph_file:
+
+            graph.write(graph_file)
+
+        return graph
 
     def get_skim_matrix(self, node_ids, weights, max_cost=None):
         """skim network net starting from node_id to node_id, using specified
@@ -228,34 +242,37 @@ class Network():
 
         return nearby_pois
 
-    def load_attribute_matrix(self, matrix, load_name, centroid_ids, varcoef, max_cost=None):
+    def load_path_attributes(self, paths, attributes, load_name):
         """
-        Add attribute values to a set of network links (links) given a list of node ids.
+        Sum attribute values over a list of paths (edge ids)
 
-        Calculates every path between every node pair (until max cost) and adds attribute
-        name/value to each intermediate link.
+        Adds new edge attribute to all graph edges and sums up the cumulative
+        attribute value for each intermediate link.
         """
-        
-        self.add_link_attribute(load_name)
 
-        assert matrix.shape[0] == matrix.shape[1]
-        assert matrix.shape[0] == len(centroid_ids)
+        self.graph.es[load_name] = 0
 
-        for i, centroid in enumerate(centroid_ids):
+        assert len(paths) == len(attributes)
 
-            paths = self.single_source_dijkstra(centroid, varcoef, max_cost=max_cost)[1]
+        for i, attr in enumerate(attributes):
 
-            for j, target in enumerate(centroid_ids):
+            path = paths[i]
+            prev = np.array(self.graph.es[path][load_name])
+            self.graph.es[path][load_name] = list(prev + attr)
 
-                if target in paths and matrix[i,j] > 0:
-                    for k in range(len(paths[target])-1):
-                        link = (paths[target][k],paths[target][k+1])
-                        prev = self.get_link_attribute_value(link,load_name) or 0
-                        self.set_link_attribute_value(link,load_name,prev+matrix[i,j])
-        
-        # save final values to link_df
-        attributes = []
-        for anode, bnode in list(self.link_df.index):
-            attributes.append(self.get_link_attribute_value((anode, bnode), load_name))
+    def get_link_attributes(self, link_attrs):
 
-        self.link_df[load_name] = attributes
+        if not isinstance(link_attrs, list):
+            
+            link_attrs = [link_attrs]
+        # add new column to link_df
+
+        data = {
+            self.link_from_node: self.graph.es[self.link_from_node],
+            self.link_to_node: self.graph.es[self.link_to_node]}
+
+        for attr in link_attrs:
+            
+            data[attr] = self.graph.es[attr]
+
+        return pd.DataFrame(data).set_index([self.link_from_node, self.link_to_node])

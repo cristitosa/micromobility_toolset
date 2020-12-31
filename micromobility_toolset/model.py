@@ -375,6 +375,46 @@ class Scenario():
     def num_zones(self):
         return len(self.zone_list)
 
+    @cache
+    def reachable_zones(self):
+        """tuple of (origin zone indices, destination zone indices) for non-intrazonal
+        zone-to-zone pairs less than mode max dist
+        """
+        # TODO: parameterize mode
+
+        return np.nonzero(self.bike_skim)
+
+    @cache
+    def zone_paths(self) :
+        """nested dictionary of paths (lists of edge/link ids) between reachable zones.
+        """
+        # TODO: parameterize mode
+
+        self.log(f'calculating network paths for {len(self.reachable_zones[0])} zone pairs...')
+
+        zone_nodes = np.array(self.zone_nodes).astype(int)
+        zone_array = np.array(self.zone_list).astype(int)
+
+        paths = []
+        for orig_idx in range(len(zone_nodes)):
+            
+            # skim indices of reachable destination zones
+            dest_idxs = self.reachable_zones[1][np.where(self.reachable_zones[0]==orig_idx)[0]]
+            orig_node = zone_nodes[orig_idx]  # note: zone_nodes have the same index as skim levels
+            dest_nodes = zone_nodes[dest_idxs]
+
+            # one-to-many shortest path search.
+            # returns nested list of edge ids
+            path_list = self.network.graph.get_shortest_paths(
+                v=orig_node,
+                to=dest_nodes,
+                weights=self.network_settings.get('weights_bike'),  # see todo
+                output='epath')
+
+            paths.extend(path_list)
+
+        return paths
+
     def _read_skim_file(self, file_path, table_name):
 
         ozone_col = self.network_settings.get('skim_pzone_col')

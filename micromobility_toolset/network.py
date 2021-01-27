@@ -169,6 +169,7 @@ class Network():
 
         if os.path.exists(graph_file or ''):
 
+            print(f'reading graph from {graph_file}')
             return ig.Graph.Read(graph_file)
 
         # first two link columns need to be from/to nodes and
@@ -189,6 +190,7 @@ class Network():
 
         if graph_file:
 
+            print(f'saving graph to {graph_file}. move or delete this file to rebuild graph')
             graph.write(graph_file)
 
         return graph

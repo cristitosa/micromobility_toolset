@@ -31,6 +31,9 @@ import time
 import yaml
 import logging
 import sqlite3
+import resource
+
+from resource import getrusage, RUSAGE_SELF
 
 import numpy as np
 import pandas as pd
@@ -386,16 +389,18 @@ class Scenario():
 
     @cache
     def zone_paths(self) :
-        """nested dictionary of paths (lists of edge/link ids) between reachable zones.
+        """nested list of paths (lists of edge/link ids) between reachable zones.
         """
         # TODO: parameterize mode
 
-        self.log(f'calculating network paths for {len(self.reachable_zones[0])} zone pairs...')
+        num_pairs = len(self.reachable_zones[0])
+        self.log(f'calculating network paths for {num_pairs} zone pairs...')
 
         zone_nodes = np.array(self.zone_nodes).astype(int)
         zone_array = np.array(self.zone_list).astype(int)
 
         paths = []
+        searched = 0
         for orig_idx in range(len(zone_nodes)):
             
             # skim indices of reachable destination zones
@@ -412,6 +417,11 @@ class Scenario():
                 output='epath')
 
             paths.extend(path_list)
+
+            # progress reporting
+            searched += len(dest_idxs) 
+            mem = getrusage(RUSAGE_SELF).ru_maxrss
+            print(f'Progress: paths {searched}/{num_pairs}; Memory (bytes): {mem}', end='\r')
 
         return paths
 

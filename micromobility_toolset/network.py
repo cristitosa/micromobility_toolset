@@ -306,7 +306,7 @@ class Network():
 
         if PREPROCESSORS:
             for func in PREPROCESSORS:
-                print(f'running {func.__name__}')
+                print(f'running {func.__name__}', end='... ')
                 func(self)
                 print('done.')
 
@@ -393,7 +393,6 @@ class Network():
 
         return skim_matrix
 
-    # TODO: update this to igraph
     def get_nearby_pois(self, poi_ids, source_ids, weights, max_cost=None):
         """
         Gets list of nearby nodes for each source node.
@@ -402,6 +401,9 @@ class Network():
         source_ids: output dictionary keys
 
         """
+
+        # TODO: update this to igraph
+        raise NotImplementedError('get_nearby_pois is not implemented in v0.2')
 
         nearby_pois = {}
         poi_set = set(poi_ids)
